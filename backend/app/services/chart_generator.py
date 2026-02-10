@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+"""
+将“图表规范 spec”转换为 ECharts option。
+
+说明：
+- 这里不是通用 BI 引擎，而是为 AI 生成图表提供“足够好用 + 可控”的默认行为
+- 重点是稳定：限制点数、兜底错误、避免生成前端渲染很慢的 option
+- 坐标轴图表会尽量补齐 xAxis.name/yAxis.name，便于读懂
+"""
+
 from typing import Any
 
 import numpy as np
@@ -11,6 +19,24 @@ MAX_CATEGORY_POINTS = 200
 MAX_SERIES = 30
 MAX_SCATTER_POINTS = 3000
 MAX_PIE_SLICES = 30
+
+
+_AGG_LABEL = {
+    "sum": "求和",
+    "avg": "平均",
+    "mean": "平均",
+    "max": "最大",
+    "min": "最小",
+    "count": "计数",
+}
+
+
+def _y_axis_name(y_col: str | None, agg: str) -> str:
+    a = str(agg or "").strip().lower() or "sum"
+    if a == "count" or not y_col:
+        return "计数"
+    label = _AGG_LABEL.get(a, a)
+    return f"{label}({y_col})"
 
 
 def _safe_top_n(df: pd.DataFrame, top_n: int | None) -> pd.DataFrame:
@@ -73,6 +99,18 @@ def _sample_step(n: int, limit: int) -> int:
 
 
 def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str, Any]:
+    """
+    生成 ECharts option。
+
+    spec 结构（由 AI 产出/规则修正后传入）：
+    - type: bar/stacked_bar/line/area/pie/scatter/histogram/boxplot
+    - x: 维度列名
+    - y: 指标列名（count 模式下可为空）
+    - series: 分组列名（可选，用于多系列）
+    - agg: sum/avg/max/min/count
+    - top_n: 类目截断（可选）
+    - title: 图表标题（可选）
+    """
     chart_type = str(spec.get("type", "")).strip().lower()
     x_col = _normalize_col(spec.get("x"))
     y_col = _normalize_col(spec.get("y"))
@@ -141,8 +179,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
                     "title": {"text": title or f"{y_col} by {x_col}"},
                     "tooltip": {"trigger": "axis"},
                     "legend": {"type": "scroll"},
-                    "xAxis": {"type": "time"},
-                    "yAxis": {"type": "value"},
+                    "xAxis": {"type": "time", "name": x_col},
+                    "yAxis": {"type": "value", "name": _y_axis_name(y_col, agg)},
                     "series": series_list,
                 }
 
@@ -179,8 +217,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
                     "title": {"text": title or f"{y_col} by {x_col}"},
                     "tooltip": {"trigger": "axis"},
                     "legend": {"type": "scroll"},
-                    "xAxis": {"type": "category", "data": x_vals},
-                    "yAxis": {"type": "value"},
+                    "xAxis": {"type": "category", "data": x_vals, "name": x_col},
+                    "yAxis": {"type": "value", "name": _y_axis_name(y_col, agg)},
                     "series": series_list,
                 }
                 return option
@@ -203,8 +241,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
             return {
                 "title": {"text": title or (f"{agg}({y_col}) by {x_col}" if agg != "count" else f"count by {x_col}")},
                 "tooltip": {"trigger": "axis"},
-                "xAxis": {"type": "time"},
-                "yAxis": {"type": "value"},
+                "xAxis": {"type": "time", "name": x_col},
+                "yAxis": {"type": "value", "name": _y_axis_name(y_col, agg)},
                 "series": [
                     {
                         "type": "line",
@@ -223,8 +261,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
         option = {
             "title": {"text": title or (f"{agg}({y_col}) by {x_col}" if agg != "count" else f"count by {x_col}")},
             "tooltip": {"trigger": "axis"},
-            "xAxis": {"type": "category", "data": grouped[x_col].tolist()},
-            "yAxis": {"type": "value"},
+            "xAxis": {"type": "category", "data": grouped[x_col].tolist(), "name": x_col},
+            "yAxis": {"type": "value", "name": _y_axis_name(y_col, agg)},
             "series": [
                 {
                     "type": "bar" if chart_type in ("bar", "stacked_bar") else "line",
@@ -361,8 +399,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
         return {
             "title": {"text": title or f"{x_col} histogram"},
             "tooltip": {"trigger": "axis"},
-            "xAxis": {"type": "category", "data": labels, "axisLabel": {"interval": 1, "rotate": 45}},
-            "yAxis": {"type": "value"},
+            "xAxis": {"type": "category", "data": labels, "axisLabel": {"interval": 1, "rotate": 45}, "name": x_col},
+            "yAxis": {"type": "value", "name": "计数"},
             "series": [{"type": "bar", "data": counts.tolist()}],
         }
 
@@ -400,8 +438,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
             return {
                 "title": {"text": title or f"{y_col} boxplot by {x_col}"},
                 "tooltip": {"trigger": "item"},
-                "xAxis": {"type": "category", "data": categories},
-                "yAxis": {"type": "value"},
+                "xAxis": {"type": "category", "data": categories, "name": x_col},
+                "yAxis": {"type": "value", "name": y_col},
                 "series": [{"type": "boxplot", "data": data}],
             }
 
@@ -414,8 +452,8 @@ def generate_echarts_option(df: pd.DataFrame, spec: dict[str, Any]) -> dict[str,
         return {
             "title": {"text": title or f"{y_col} boxplot"},
             "tooltip": {"trigger": "item"},
-            "xAxis": {"type": "category", "data": [str(y_col)]},
-            "yAxis": {"type": "value"},
+            "xAxis": {"type": "category", "data": [str(y_col)], "name": "类别"},
+            "yAxis": {"type": "value", "name": y_col},
             "series": [{"type": "boxplot", "data": [[low, q1, q2, q3, high]]}],
         }
 

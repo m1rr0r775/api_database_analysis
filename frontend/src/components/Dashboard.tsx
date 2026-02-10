@@ -29,6 +29,7 @@ interface DashboardProps {
 
 type LegendPreset = 'right' | 'left' | 'top' | 'bottom' | 'none' | 'float';
 
+// ECharts option 经常被“局部 patch”，这里用深拷贝避免直接修改 state 里的对象引用。
 const deepClone = (value: any): any => {
   if (Array.isArray(value)) return value.map(deepClone);
   if (value && typeof value === 'object') {
@@ -136,6 +137,8 @@ const setBarItemColor = (option: any, seriesIndex: number, dataIndex: number, co
 };
 
 const getGraphicText = (option: any, id: string) => {
+  // 轴标题采用 graphic.text（可拖拽），而不是直接使用 xAxis.name/yAxis.name。
+  // 这样可以更自由地摆放标题位置；同时会在渲染时做“轴名兜底”，避免图表无轴名难读。
   const g = option?.graphic;
   const list = Array.isArray(g) ? g : g ? [g] : [];
   const item = list.find((x: any) => x?.id === id);
@@ -203,6 +206,37 @@ const setAxisName = (option: any, axisKey: 'xAxis' | 'yAxis', index: number, nam
 };
 
 const hasCartesianAxes = (option: any) => !!(option?.xAxis || option?.yAxis);
+
+// 兜底：确保坐标轴图表一定有轴名称可读。
+// 若用户已经设置了可拖拽的 graphic 轴标题，则不再重复设置 axis.name。
+const ensureAxisNames = (option: any) => {
+  const o = deepClone(option || {});
+  if (!hasCartesianAxes(o)) return o;
+  const series = Array.isArray(o.series) ? o.series : [];
+  if (String(series[0]?.type || '').toLowerCase() === 'pie') return o;
+
+  const ensureOne = (axisKey: 'xAxis' | 'yAxis', index: number, fallbackName: string) => {
+    const graphicId = `axis_title_${axisKey}_${index}`;
+    if (getGraphicText(o, graphicId)) return;
+
+    const { axes, current, isArray } = axisAt(o[axisKey], index);
+    const existing = String(current?.name || '').trim();
+    const name = existing || fallbackName;
+    if (!name) return;
+    const patch: any = { name };
+    if (!current?.nameLocation) patch.nameLocation = 'middle';
+    if (current?.nameGap === undefined) patch.nameGap = 30;
+    axes[index] = { ...current, ...patch };
+    o[axisKey] = isArray ? axes : axes[0];
+  };
+
+  const x0 = axisAt(o.xAxis, 0).current;
+  const xFallback = String(x0?.type || '').toLowerCase() === 'time' ? '时间' : '类别';
+  ensureOne('xAxis', 0, xFallback);
+  ensureOne('yAxis', 0, '数值');
+  if (Array.isArray(o.yAxis) && o.yAxis.length >= 2) ensureOne('yAxis', 1, '数值2');
+  return o;
+};
 
 const applyDualAxis = (option: any, enabled: boolean) => {
   const o = deepClone(option || {});
@@ -936,10 +970,7 @@ const Dashboard: React.FC<DashboardProps> = ({ title, charts, theme, onThemeChan
                     if (r) echartsRef.current[c.id] = r;
                     else delete echartsRef.current[c.id];
                   }}
-                  option={applyAdaptiveOption(
-                    applyThemeToOption(c.option, theme),
-                    numberFormat[c.id] || 'auto'
-                  )}
+                  option={applyAdaptiveOption(applyThemeToOption(ensureAxisNames(c.option), theme), numberFormat[c.id] || 'auto')}
                   style={{ height: getLayout(c.id).height, width: '100%' }}
                 />
                 <div

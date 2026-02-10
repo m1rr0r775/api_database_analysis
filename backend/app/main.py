@@ -3,7 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-from app.api import upload, analysis, sessions, export, db
+from app.api import upload, analysis, sessions, export, db, clean, multisheet, model
 from app.core.auth import verify_api_key
 from app.core.config import settings
 from app.core.error_handling import http_exception_handler, unhandled_exception_handler, validation_exception_handler
@@ -39,6 +39,9 @@ app.include_router(analysis.router, prefix="/api", tags=["analysis"])
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 app.include_router(export.router, prefix="/api", tags=["export"])
 app.include_router(db.router, prefix="/api", tags=["db"])
+app.include_router(clean.router, prefix="/api", tags=["clean"])
+app.include_router(multisheet.router, prefix="/api", tags=["multisheet"])
+app.include_router(model.router, prefix="/api", tags=["model"])
 
 @app.get("/")
 def read_root():

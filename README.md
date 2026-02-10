@@ -6,6 +6,10 @@
 - **多数据源**：CSV/Excel 上传；数据库连接 + SQL（仅 SELECT/CTE）查询并落成数据表
 - **会话机制**：一次会话管理多张数据表，AI 分析时自动汇总上下文
 - **AI 分析**：兼容 DeepSeek/OpenAI/本地 OpenAI-format 端点，支持生成单图或多图看板
+- **智能数据整理（可控）**：上传后自动检测并整理（映射行、多级表头、空行/空列、日期/数值/时间戳等），并输出质量报告与“整理前后对比”
+- **多 Sheet Excel**：识别并列出所有 Sheet，支持逐 Sheet 预览/选择抽取，支持结构相似 Sheet 堆叠合并（追加 `__sheet__`）
+- **数据模型构建器**：两表关联建议（置信度 + 关系类型），支持内/左/右/全连接生成合并视图，继续参与联合分析与出图
+- **分析会话历史**：一键“新会话（清空分析）”，自动把当前会话保存到本地历史；可从历史列表打开或删除
 - **可视化与导出**：图表编辑与看板导出（PNG / PDF / Excel）
 - **安全与可读报错**：统一错误格式（detail/hint/error_id），数据格式问题给出可理解的提示
 
@@ -14,6 +18,11 @@
 - `frontend/`：React + TypeScript + Vite 前端（数据源、编辑器、看板、导出）
 - `uploads/`：会话数据表落盘目录（运行时生成）
 - `backend/data/`：数据库连接与查询记录等本地数据（运行时生成；已忽略提交）
+
+## 开发说明（代码可读性）
+- **会话元数据**：会话内文件清单存放在 `uploads/<session_id>/meta.json`，推荐通过后端 [session_meta.py](file:///e:/personal_project/api_data_analysis/api_database_analysis/backend/app/services/session_meta.py) 统一读写，避免重复实现与路径安全遗漏。
+- **弹窗布局**：前端长内容弹窗统一使用 [ModalShell.tsx](file:///e:/personal_project/api_data_analysis/api_database_analysis/frontend/src/components/ModalShell.tsx)（header/footer 固定，主体滚动），减少重复代码并避免页面无滚动条的问题。
+- **分析会话历史**：前端用本地存储保存会话快照（仪表板/主题/选表等），见 [analysisSessions.ts](file:///e:/personal_project/api_data_analysis/api_database_analysis/frontend/src/analysisSessions.ts)。
 
 ## 端口与地址
 | 服务 | 默认端口 | 地址 | 说明 |
@@ -68,11 +77,30 @@ npm.cmd run dev
 前端默认地址：`http://127.0.0.1:5173`
 
 ## 使用指南（浏览器）
+### 分析会话（清空/历史）
+1. 右上角点击 “新会话（清空分析）”：会创建新的会话并清空当前分析内容（图表/看板/选择的数据表），旧会话会保存到“历史”
+2. 右上角点击 “历史”：可以打开旧会话继续分析，也可以删除历史记录（删除仅清理网页端本地记录）
+
 ### 文件上传分析
 1. 在 “Upload Data File” 选择 CSV/Excel 上传（可多选）
+2. （可选）开启 “智能数据整理” 并在高级设置里控制整理步骤与自动转换列
 2. 右侧输入分析目标，例如：
    - “帮我生成销售分析看板，包含趋势、Top 产品、区域分布”
    - “检查这份数据是否有缺失值/重复行，并给出清洗建议”
+
+### 多 Sheet Excel
+1. 上传包含多个 Sheet 的 Excel 后，“数据表”列表会显示 `Excel 多Sheet`
+2. 点击 “Sheet管理”：
+   - 左侧查看 Sheet 列表（行/列数、空/模板 Sheet 标记）
+   - 右侧预览当前 Sheet（原始/整理后、质量提示）
+3. 勾选需要分析的 Sheet，点击 “抽取为数据表”
+4. （可选）勾选 “结构相似Sheet堆叠合并” 将同结构 Sheet 堆叠为统一表（自动添加 `__sheet__`）
+
+### 数据模型（两表关联）
+1. 至少有 2 张数据表后，点击 “数据模型”
+2. 系统会给出关联字段建议（按字段名相似度与唯一性推断）
+3. 选择连接类型（内/左/右/全）并生成“合并视图”
+4. 合并视图会作为新数据表加入会话，可继续出图/联合分析/导出
 
 ### 数据库直连分析
 1. 在 “数据库数据源” 新建连接（MySQL/PostgreSQL/SQLite）
@@ -119,6 +147,34 @@ npm.cmd run dev
 
 ## License
 MIT License. See [LICENSE](LICENSE).
+
+## 常用 API（开发者）
+说明：前端开发模式下 `/api/*` 会代理到后端 `8000`。
+
+### 会话与上传
+- `POST /api/sessions/`：创建会话
+- `GET /api/sessions/{session_id}/files/`：查看会话内数据表
+- `POST /api/sessions/{session_id}/files/`：上传文件（支持 `smart_clean` 与 `clean_options`）
+
+### 智能整理
+- `POST /api/sessions/{session_id}/files/{file_id}/clean/preview/`：生成整理方案预览（返回原始/整理后对比与质量报告）
+- `POST /api/sessions/{session_id}/files/{file_id}/clean/apply/`：应用整理（生成 cleaned 版本并可回退）
+- `POST /api/sessions/{session_id}/files/{file_id}/clean/revert/`：回退到原始版本
+- `GET/POST/DELETE /api/clean/templates/*`：整理模板管理
+
+clean_options 里与“按列控制自动转换”相关的参数：
+- `numeric_columns: string[]`：只对这些列做数值转换（留空=自动识别）
+- `timestamp_columns: string[]`：只对这些列做毫秒时间戳转换（留空=自动识别）
+- `convert_epoch_timestamps: boolean`：是否启用时间戳识别转换
+
+### 多 Sheet Excel
+- `GET /api/sessions/{session_id}/excel/{file_id}/sheets/`：获取 Sheet 列表
+- `POST /api/sessions/{session_id}/excel/{file_id}/preview/`：预览指定 Sheet（原始/整理后）
+- `POST /api/sessions/{session_id}/excel/{file_id}/extract/`：抽取 Sheet 为数据表（支持堆叠合并）
+
+### 数据模型（两表）
+- `POST /api/sessions/{session_id}/model/suggest/`：给出关联字段建议
+- `POST /api/sessions/{session_id}/model/build/`：生成合并视图（join 结果作为新数据表加入会话）
 
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md).
