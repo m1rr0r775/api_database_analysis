@@ -213,6 +213,19 @@ function App() {
                         <p className="text-sm text-gray-500">Rows: {activeFile.row_count} | Cols: {activeFile.columns.length}</p>
                      </div>
                   </div>
+
+                  {!!activeFile.diagnostics?.warnings?.length && (
+                    <div className="mb-4 space-y-2">
+                      {activeFile.diagnostics.warnings.map((w: string, i: number) => (
+                        <div
+                          key={`${w}-${i}`}
+                          className="px-3 py-2 rounded border border-yellow-200 bg-yellow-50 text-yellow-900 text-sm"
+                        >
+                          {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   
                   <div className="overflow-x-auto max-h-[400px]">
                     <table className="min-w-full text-sm text-left text-gray-500">

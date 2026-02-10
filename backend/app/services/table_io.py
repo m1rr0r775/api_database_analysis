@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import pandas as pd
@@ -12,6 +13,9 @@ def _safe_filename(name: str) -> str:
     return base or "upload"
 
 
+_ID_LIKE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _dedupe_columns(cols: list[Any]) -> list[str]:
     seen: dict[str, int] = {}
     out: list[str] = []
@@ -19,6 +23,7 @@ def _dedupe_columns(cols: list[Any]) -> list[str]:
         name = str(c).strip() if c is not None else ""
         if not name:
             name = "Unnamed"
+        name = re.sub(r"\s+", "", name)
         if name not in seen:
             seen[name] = 1
             out.append(name)
@@ -26,6 +31,61 @@ def _dedupe_columns(cols: list[Any]) -> list[str]:
             seen[name] += 1
             out.append(f"{name}_{seen[name]}")
     return out
+
+
+def _maybe_drop_mapping_row(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    if df.shape[0] < 2 or df.shape[1] < 2:
+        return df, False
+    first = df.iloc[0]
+    vals = [first[c] for c in df.columns]
+    str_vals = [v for v in vals if isinstance(v, str)]
+    if len(str_vals) < max(2, int(len(vals) * 0.6)):
+        return df, False
+    id_like = [v for v in str_vals if _ID_LIKE.fullmatch(v.strip())]
+    if len(id_like) < max(2, int(len(vals) * 0.6)):
+        return df, False
+    return df.iloc[1:].reset_index(drop=True), True
+
+
+def _maybe_convert_excel_date(df: pd.DataFrame) -> pd.DataFrame:
+    d = df
+    for col in d.columns:
+        name = str(col)
+        if ("日期" not in name) and ("时间" not in name):
+            continue
+        s = d[col]
+        if not (pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s)):
+            continue
+        try:
+            non_na = pd.to_numeric(s, errors="coerce").dropna()
+            if non_na.empty:
+                continue
+            med = float(non_na.median())
+            mx = float(non_na.max())
+            if 20000 <= med <= 80000 and mx < 200000:
+                converted = pd.to_datetime(s, unit="D", origin="1899-12-30", errors="coerce")
+                ratio = float(converted.notna().mean()) if len(converted) else 0.0
+                if ratio >= 0.85:
+                    d[col] = converted
+        except Exception:
+            continue
+    return d
+
+
+def _maybe_convert_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    d = df
+    for col in d.columns:
+        s = d[col]
+        if not (pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s)):
+            continue
+        try:
+            converted = pd.to_numeric(s, errors="coerce")
+            ratio = float(converted.notna().mean()) if len(converted) else 0.0
+            if ratio >= 0.85:
+                d[col] = converted
+        except Exception:
+            continue
+    return d
 
 
 def read_table(file_path: str) -> pd.DataFrame:
@@ -68,9 +128,16 @@ def read_table(file_path: str) -> pd.DataFrame:
 
     df = df.copy()
     df.columns = _dedupe_columns(list(df.columns))
+    df, dropped_mapping = _maybe_drop_mapping_row(df)
+    if dropped_mapping:
+        try:
+            df.attrs["mapping_row_removed"] = True
+        except Exception:
+            pass
+    df = _maybe_convert_excel_date(df)
+    df = _maybe_convert_numeric(df)
     return df
 
 
 def safe_filename(name: str) -> str:
     return _safe_filename(name)
-

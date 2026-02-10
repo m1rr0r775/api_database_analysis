@@ -18,6 +18,11 @@ def diagnose_df(df: pd.DataFrame) -> dict[str, Any]:
         warnings.append("数据行数较大，建议先在数据库侧聚合或抽样。")
     if cols > 200:
         warnings.append("列数较多，建议先筛选关键字段以提升分析质量与速度。")
+    try:
+        if bool(getattr(df, "attrs", {}).get("mapping_row_removed")):
+            warnings.append("检测到首行字段映射行，已自动移除（不影响原文件）。")
+    except Exception:
+        pass
 
     empty_cols: list[str] = []
     try:
@@ -56,4 +61,3 @@ def diagnose_df(df: pd.DataFrame) -> dict[str, Any]:
         "dtypes": dtypes,
         "warnings": warnings,
     }
-
